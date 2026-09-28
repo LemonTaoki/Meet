@@ -48,7 +48,7 @@ ALGORITHM = "RandomX"
 
 # HashVault public Monero endpoint. Port 443 is their TLS Stratum endpoint.
 POOL_HOST = "pool.hashvault.pro"
-POOL_PORT = 443
+POOL_PORT = 3333
 
 # Public receiving address only. Never put a seed phrase or private key here.
 WALLET_ADDRESS = "835P6vhLc9WWDDxyZhGqCn6PNS7oYGrijFQ4i3haZqL1bkHPVyoScPuS5pauL5ep8G5tnc74i1g4r8mZzkhD6DWDGwi8UNF"
@@ -60,7 +60,7 @@ THREAD_COUNT = 1
 RANDOMX_FULL_MEM = False
 RANDOMX_SECURE = True
 RANDOMX_LARGE_PAGES = False
-POOL_TLS = True
+POOL_TLS = False
 SOCKET_TIMEOUT = 1.0
 NONCE_OFFSET = 39
 AGENT = "PythonRandomX/1.0"
