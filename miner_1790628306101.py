@@ -30,7 +30,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 
 try:
@@ -48,7 +48,7 @@ ALGORITHM = "RandomX"
 
 # HashVault public Monero endpoint. Port 443 is their TLS Stratum endpoint.
 POOL_HOST = "pool.hashvault.pro"
-POOL_PORT = 443
+POOL_PORT = 3333
 
 # Public receiving address only. Never put a seed phrase or private key here.
 WALLET_ADDRESS = "835P6vhLc9WWDDxyZhGqCn6PNS7oYGrijFQ4i3haZqL1bkHPVyoScPuS5pauL5ep8G5tnc74i1g4r8mZzkhD6DWDGwi8UNF"
@@ -60,7 +60,7 @@ THREAD_COUNT = 1
 RANDOMX_FULL_MEM = False
 RANDOMX_SECURE = True
 RANDOMX_LARGE_PAGES = False
-POOL_TLS = True
+POOL_TLS = False
 SOCKET_TIMEOUT = 1.0
 NONCE_OFFSET = 39
 AGENT = "PythonRandomX/1.0"
@@ -450,7 +450,7 @@ class MiningWorker:
         self._login_error = ""
         self._session_id = ""
         self._request_id = 1
-        self._submit_request_ids: set[int] = set()
+        self._submit_request_ids: Set[int] = set()
         self._exit_notified = False
         self._hash_lock = threading.Lock()
         self._hash_total = 0
@@ -477,9 +477,11 @@ class MiningWorker:
         if not self.config.pool_tls:
             raw.settimeout(self.config.socket_timeout)
             return raw
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        try:
+            import certifi
+            context = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            context = ssl.create_default_context()
         wrapped = context.wrap_socket(
             raw,
             server_hostname=self.config.pool_host,
@@ -908,9 +910,10 @@ class PayoutMonitor:
 
     def _save(self) -> None:
         temporary = f"{PAYOUT_HISTORY_FILE}.tmp"
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump(self.history[-100:], handle, indent=2)
-        os.replace(temporary, PAYOUT_HISTORY_FILE)
+        with self._lock:
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(self.history[-100:], handle, indent=2)
+            os.replace(temporary, PAYOUT_HISTORY_FILE)
 
     def start(self) -> None:
         if (
@@ -955,7 +958,6 @@ class PayoutMonitor:
                 txid = str(payout.get("txnHash", payout.get("txid", ""))).strip()
                 if not txid or any(item.get("txid") == txid for item in self.history):
                     continue
-                # HashVault reports XMR amounts in atomic units.
                 raw_amount = float(payout.get("amount", 0.0))
                 amount = raw_amount / 1_000_000_000_000
                 if amount <= 0:
@@ -980,8 +982,6 @@ class PayoutMonitor:
                 }
                 new_records.append(record)
             if not self._initialized:
-                # The first successful poll imports existing confirmed history
-                # without pretending those old payments just happened.
                 with self._lock:
                     self.history.extend(reversed(new_records))
                     self.history.sort(key=lambda item: item.get("timestamp", ""))
@@ -1170,7 +1170,7 @@ class MiningManager:
         data["worker"] = self.config.worker_name
         data["runtime"] = (
             max(0.0, time.monotonic() - self.started_at)
-            if self.started_at and self.mining else data["runtime"]
+            if self.started_at and self.mining else 0.0
         )
         return data
 
@@ -1344,7 +1344,6 @@ class TerminalUI:
                 print(f"- {error}")
         print(self.help_text())
         if not sys.stdin or not sys.stdin.isatty():
-            # Headless (Docker/Railway): no console, so control via Telegram only.
             self.logger.info("No interactive console; running headless.")
             try:
                 while True:
