@@ -25,11 +25,11 @@ import struct
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 
@@ -47,20 +47,23 @@ COIN_NAME = "Monero"
 ALGORITHM = "RandomX"
 
 # HashVault public Monero endpoint. Port 443 is their TLS Stratum endpoint.
-POOL_HOST = "pool.hashvault.pro"
-POOL_PORT = 3333
+POOL_HOST = os.getenv("POOL_HOST", "pool.hashvault.pro")
+POOL_PORT = int(os.getenv("POOL_PORT", "443"))
+POOL_TLS = os.getenv("POOL_TLS", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 # Public receiving address only. Never put a seed phrase or private key here.
-WALLET_ADDRESS = "835P6vhLc9WWDDxyZhGqCn6PNS7oYGrijFQ4i3haZqL1bkHPVyoScPuS5pauL5ep8G5tnc74i1g4r8mZzkhD6DWDGwi8UNF"
-WORKER_NAME = "python-controller"
-THREAD_COUNT = 1
+WALLET_ADDRESS = os.getenv(
+    "WALLET_ADDRESS",
+    "835P6vhLc9WWDDxyZhGqCn6PNS7oYGrijFQ4i3haZqL1bkHPVyoScPuS5pauL5ep8G5tnc74i1g4r8mZzkhD6DWDGwi8UNF",
+)
+WORKER_NAME = os.getenv("WORKER_NAME", "python-controller")
+THREAD_COUNT = int(os.getenv("THREAD_COUNT", "1"))
 
 # The package's light mode avoids allocating the approximately 2 GB RandomX
 # dataset. It is slower than full mode but is practical on ordinary machines.
-RANDOMX_FULL_MEM = False
-RANDOMX_SECURE = True
-RANDOMX_LARGE_PAGES = False
-POOL_TLS = False
+RANDOMX_FULL_MEM = os.getenv("RANDOMX_FULL_MEM", "false").strip().lower() in {"1", "true", "yes", "on"}
+RANDOMX_SECURE = os.getenv("RANDOMX_SECURE", "true").strip().lower() in {"1", "true", "yes", "on"}
+RANDOMX_LARGE_PAGES = os.getenv("RANDOMX_LARGE_PAGES", "false").strip().lower() in {"1", "true", "yes", "on"}
 SOCKET_TIMEOUT = 1.0
 NONCE_OFFSET = 39
 AGENT = "PythonRandomX/1.0"
@@ -366,8 +369,20 @@ class TelegramManager:
                 self.logger.warning(f"Telegram API rejected {method}.")
                 return None
             return result.get("result")
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            self.logger.warning(
+                f"Telegram {method} failed: HTTPError {exc.code}: {exc.reason}. Body: {body[:200]}"
+            )
+            return None
+        except urllib.error.URLError as exc:
+            self.logger.warning(f"Telegram {method} failed: URLError: {exc.reason}")
+            return None
         except Exception as exc:
-            self.logger.warning(f"Telegram {method} failed: {type(exc).__name__}.")
+            self.logger.warning(f"Telegram {method} failed: {type(exc).__name__}: {exc}")
             return None
 
     def send(self, message: str) -> bool:
@@ -477,11 +492,11 @@ class MiningWorker:
         if not self.config.pool_tls:
             raw.settimeout(self.config.socket_timeout)
             return raw
-        try:
-            import certifi
-            context = ssl.create_default_context(cafile=certifi.where())
-        except ImportError:
-            context = ssl.create_default_context()
+
+        # Some mining pools use self-signed or non-standard certificates.
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
         wrapped = context.wrap_socket(
             raw,
             server_hostname=self.config.pool_host,
@@ -525,7 +540,7 @@ class MiningWorker:
             self.stop()
             return False
         except Exception as exc:
-            self.logger.error(f"Could not connect to pool: {type(exc).__name__}.")
+            self.logger.error(f"Could not connect to pool: {type(exc).__name__}: {exc}")
             return False
 
         self._network_thread = threading.Thread(
