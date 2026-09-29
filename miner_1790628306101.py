@@ -48,7 +48,7 @@ ALGORITHM = "RandomX"
 
 # HashVault public Monero endpoint. Port 443 is their TLS Stratum endpoint.
 POOL_HOST = "pool.hashvault.pro"
-POOL_PORT = 3333
+POOL_PORT = 443
 
 # Public receiving address only. Never put a seed phrase or private key here.
 WALLET_ADDRESS = "835P6vhLc9WWDDxyZhGqCn6PNS7oYGrijFQ4i3haZqL1bkHPVyoScPuS5pauL5ep8G5tnc74i1g4r8mZzkhD6DWDGwi8UNF"
@@ -60,7 +60,7 @@ THREAD_COUNT = 1
 RANDOMX_FULL_MEM = False
 RANDOMX_SECURE = True
 RANDOMX_LARGE_PAGES = False
-POOL_TLS = False
+POOL_TLS = True
 SOCKET_TIMEOUT = 1.0
 NONCE_OFFSET = 39
 AGENT = "PythonRandomX/1.0"
@@ -477,11 +477,9 @@ class MiningWorker:
         if not self.config.pool_tls:
             raw.settimeout(self.config.socket_timeout)
             return raw
-        try:
-            import certifi
-            context = ssl.create_default_context(cafile=certifi.where())
-        except ImportError:
-            context = ssl.create_default_context()
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
         wrapped = context.wrap_socket(
             raw,
             server_hostname=self.config.pool_host,
